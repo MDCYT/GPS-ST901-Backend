@@ -85,6 +85,32 @@ async function getTripsByDeviceId(deviceId, from, to) {
   return rows;
 }
 
+async function getTripPositions(deviceId, tripId) {
+  const [trips] = await pool.query(
+    `SELECT id, started_at, ended_at FROM trips WHERE id = ? AND device_id = ? LIMIT 1`,
+    [tripId, deviceId],
+  );
+
+  if (trips.length === 0) return null;
+
+  const trip = trips[0];
+
+  let sql = `SELECT packet_time, latitude, longitude, speed_kmh, course
+    FROM gps_positions
+    WHERE device_id = ? AND packet_time >= ?`;
+  const params = [deviceId, trip.started_at];
+
+  if (trip.ended_at) {
+    sql += " AND packet_time <= ?";
+    params.push(trip.ended_at);
+  }
+
+  sql += " ORDER BY packet_time ASC";
+
+  const [rows] = await pool.query(sql, params);
+  return rows;
+}
+
 async function getEventsByDeviceId(deviceId) {
   const [rows] = await pool.query(
     `SELECT id, device_id, event_type, event_time, payload
@@ -407,6 +433,7 @@ module.exports = {
   getLatestByDeviceId,
   getPositionsByDeviceId,
   getTripsByDeviceId,
+  getTripPositions,
   getEventsByDeviceId,
   createCommand,
   getDeviceStatusById,

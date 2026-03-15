@@ -45,10 +45,11 @@ function parsePacket(packet) {
   const externalPowerMv = parts[15] ? Number(parts[15]) : undefined;
   const voltageMv = parts[16] ? Number(parts[16].replace("#", "")) : undefined;
 
-  // Bit 19 del statusFlags indica si la batería interna está conectada al vehículo
-  const batteryConnected = statusFlags
-    ? Boolean(parseInt(statusFlags, 16) & 0x80000)
-    : null;
+  // Bit 19: batería interna conectada al vehículo
+  // Bit 10: ignición (cable ACC con voltaje)
+  const flagInt = statusFlags ? parseInt(statusFlags, 16) : null;
+  const batteryConnected = flagInt !== null ? Boolean(flagInt & 0x80000) : null;
+  const ignitionOn      = flagInt !== null ? Boolean(flagInt & 0x0400)   : null;
 
   return {
     trackerId,
@@ -60,6 +61,7 @@ function parsePacket(packet) {
     course: Number(course),
     statusFlags,
     batteryConnected,
+    ignitionOn,
     gsmSignal,
     batteryLevel,
     externalPowerMv,

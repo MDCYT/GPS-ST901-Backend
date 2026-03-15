@@ -48,6 +48,11 @@ const routes = [
     handler: controller.getPositions,
   },
   { method: "GET", pattern: /^\/devices\/(?<id>[^/]+)\/trips$/, handler: controller.getTrips },
+  {
+    method: "GET",
+    pattern: /^\/devices\/(?<id>[^/]+)\/trips\/(?<tripId>[^/]+)\/positions$/,
+    handler: controller.getTripPositions,
+  },
   { method: "GET", pattern: /^\/devices\/(?<id>[^/]+)\/events$/, handler: controller.getEvents },
   {
     method: "POST",

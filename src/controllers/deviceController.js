@@ -243,6 +243,26 @@ async function getTrips(req, res, params, url) {
   sendJson(res, 200, rows);
 }
 
+async function getTripPositions(req, res, params) {
+  const deviceId = parseDeviceId(params.id);
+  const tripId = parseDeviceId(params.tripId);
+  if (!deviceId || !tripId) {
+    sendJson(res, 400, { error: "id invalido" });
+    return;
+  }
+
+  const allowed = await ensureDeviceAccess(req, res, deviceId, false);
+  if (!allowed) return;
+
+  const rows = await deviceService.getTripPositions(deviceId, tripId);
+  if (rows === null) {
+    sendJson(res, 404, { error: "Viaje no encontrado" });
+    return;
+  }
+
+  sendJson(res, 200, rows);
+}
+
 async function getEvents(req, res, params) {
   const deviceId = parseDeviceId(params.id);
   if (!deviceId) {
@@ -351,6 +371,7 @@ module.exports = {
   getLatest,
   getPositions,
   getTrips,
+  getTripPositions,
   getEvents,
   postEngineStop,
   postEngineResume,
