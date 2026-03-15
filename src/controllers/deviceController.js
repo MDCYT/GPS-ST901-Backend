@@ -55,6 +55,35 @@ async function registerMyDevice(req, res) {
   }
 }
 
+async function updateMyDevice(req, res, params) {
+  if (!req.authUser) {
+    sendJson(res, 401, { error: "No autenticado" });
+    return;
+  }
+
+  const deviceId = parseDeviceId(params.id);
+  if (!deviceId) {
+    sendJson(res, 400, { error: "id invalido" });
+    return;
+  }
+
+  try {
+    const body = await readJsonBody(req);
+    const device = await deviceService.updateDeviceProfile(req.authUser.id, deviceId, body || {});
+    sendJson(res, 200, {
+      message: "Dispositivo actualizado",
+      device,
+    });
+  } catch (err) {
+    const status = /solo el propietario/i.test(err.message)
+      ? 403
+      : /name|vehicleName|debes enviar/i.test(err.message)
+      ? 400
+      : 500;
+    sendJson(res, status, { error: err.message || "Error actualizando dispositivo" });
+  }
+}
+
 async function setMyDevicePassword(req, res, params) {
   if (!req.authUser) {
     sendJson(res, 401, { error: "No autenticado" });
@@ -364,6 +393,7 @@ module.exports = {
   listMyDevices,
   listMyMapDevices,
   registerMyDevice,
+  updateMyDevice,
   setMyDevicePassword,
   shareMyDevice,
   revokeMyDeviceShare,

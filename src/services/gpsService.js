@@ -4,6 +4,11 @@ const { pool } = require("../config/db");
 const batteryStateCache  = new Map();
 const ignitionStateCache = new Map();
 
+// --- Anti-ruido ignición ---
+const IGNITION_DEBOUNCE_MS = 10 * 1000;
+const IGNITION_DEBOUNCE_PACKETS = 3;
+const IGNITION_MIN_CHANGE_INTERVAL_MS = 8 * 1000;
+
 // --- Seguimiento de viajes ---
 // Velocidad mínima para considerar que el vehículo está en movimiento
 const TRIP_MIN_SPEED_KMH = 3;
@@ -11,6 +16,95 @@ const TRIP_MIN_SPEED_KMH = 3;
 const TRIP_PARK_TIMEOUT_MS = 5 * 60 * 1000;
 
 const tripStateCache = new Map();
+
+function isIgnitionPacketReliable(parsed) {
+  const voltage = Number(parsed.voltageMv ?? 0);
+  const external = Number(parsed.externalPowerMv ?? 0);
+  // Evitar decidir ignición cuando el equipo reporta energía en 0 (ruido/reinicio).
+  return voltage > 0 || external > 0;
+}
+
+async function processIgnitionState(deviceId, parsed) {
+  if (parsed.ignitionOn === null) {
+    return { known: false, on: null, changed: false };
+  }
+
+  const trackerId = parsed.trackerId;
+  const packetMs = new Date(parsed.packetTime).getTime();
+  const rawCurrent = parsed.ignitionOn;
+  const reliable = isIgnitionPacketReliable(parsed);
+
+  if (!ignitionStateCache.has(trackerId)) {
+    ignitionStateCache.set(trackerId, {
+      stable: rawCurrent,
+      lastStableMs: packetMs,
+      candidate: null,
+      candidateSinceMs: null,
+      candidateCount: 0,
+    });
+
+    return { known: true, on: rawCurrent, changed: false };
+  }
+
+  const state = ignitionStateCache.get(trackerId);
+
+  if (rawCurrent === state.stable) {
+    state.candidate = null;
+    state.candidateSinceMs = null;
+    state.candidateCount = 0;
+    return { known: true, on: state.stable, changed: false };
+  }
+
+  if (!reliable) {
+    return { known: true, on: state.stable, changed: false };
+  }
+
+  if (state.candidate !== rawCurrent) {
+    state.candidate = rawCurrent;
+    state.candidateSinceMs = packetMs;
+    state.candidateCount = 1;
+    return { known: true, on: state.stable, changed: false };
+  }
+
+  state.candidateCount += 1;
+
+  const candidateElapsed = packetMs - state.candidateSinceMs;
+  const enoughDebounce =
+    candidateElapsed >= IGNITION_DEBOUNCE_MS ||
+    state.candidateCount >= IGNITION_DEBOUNCE_PACKETS;
+
+  if (!enoughDebounce) {
+    return { known: true, on: state.stable, changed: false };
+  }
+
+  const sinceLastStable = packetMs - state.lastStableMs;
+  if (sinceLastStable < IGNITION_MIN_CHANGE_INTERVAL_MS) {
+    return { known: true, on: state.stable, changed: false };
+  }
+
+  state.stable = rawCurrent;
+  state.lastStableMs = packetMs;
+  state.candidate = null;
+  state.candidateSinceMs = null;
+  state.candidateCount = 0;
+
+  const eventType = rawCurrent ? "ignition_on" : "ignition_off";
+  const payload = JSON.stringify({
+    statusFlags: parsed.statusFlags,
+    voltageMv: parsed.voltageMv,
+    externalPowerMv: parsed.externalPowerMv,
+  });
+
+  await pool.execute(
+    `INSERT INTO device_events (device_id, event_type, event_time, payload)
+     VALUES (?, ?, ?, ?)`,
+    [deviceId, eventType, parsed.packetTime, payload],
+  );
+
+  console.log(`Evento detectado (estable): ${eventType} para tracker ${trackerId}`);
+
+  return { known: true, on: state.stable, changed: true };
+}
 
 function haversineKm(lat1, lon1, lat2, lon2) {
   const R = 6371;
@@ -74,7 +168,7 @@ async function closeTripInCache(state, deviceId, trackerId) {
   state.speedCount = 0;
 }
 
-async function checkTripEvent(deviceId, parsed) {
+async function checkTripEvent(deviceId, parsed, ignition) {
   const trackerId = parsed.trackerId;
   const packetMs = new Date(parsed.packetTime).getTime();
   const speed    = parsed.speedKmh;
@@ -82,10 +176,9 @@ async function checkTripEvent(deviceId, parsed) {
   const lon      = parsed.longitude;
   const isMoving = speed >= TRIP_MIN_SPEED_KMH;
 
-  // Si el GPS reporta ignición, usarla como señal principal; si no se conoce,
-  // caer de vuelta a la detección por velocidad.
-  const ignitionKnown = parsed.ignitionOn !== null;
-  const ignitionOn    = parsed.ignitionOn === true;
+  // Usar ignición estabilizada; si no está disponible, usar fallback por velocidad.
+  const ignitionKnown = ignition.known;
+  const ignitionOn = ignition.on === true;
 
   if (!tripStateCache.has(trackerId)) {
     const newState = {
@@ -228,8 +321,8 @@ async function savePosition(parsed) {
   );
 
   await checkBatteryEvent(deviceId, parsed);
-  await checkIgnitionEvent(deviceId, parsed);
-  await checkTripEvent(deviceId, parsed);
+  const ignition = await processIgnitionState(deviceId, parsed);
+  await checkTripEvent(deviceId, parsed, ignition);
 }
 
 async function checkBatteryEvent(deviceId, parsed) {
@@ -255,39 +348,6 @@ async function checkBatteryEvent(deviceId, parsed) {
       batteryLevel: parsed.batteryLevel,
       externalPowerMv: parsed.externalPowerMv,
       voltageMv: parsed.voltageMv,
-    });
-
-    await pool.execute(
-      `INSERT INTO device_events (device_id, event_type, event_time, payload)
-       VALUES (?, ?, ?, ?)`,
-      [deviceId, eventType, parsed.packetTime, payload],
-    );
-
-    console.log(`Evento detectado: ${eventType} para tracker ${trackerId}`);
-  }
-}
-
-async function checkIgnitionEvent(deviceId, parsed) {
-  if (parsed.ignitionOn === null) return;
-
-  const trackerId = parsed.trackerId;
-  const current = parsed.ignitionOn;
-
-  if (!ignitionStateCache.has(trackerId)) {
-    ignitionStateCache.set(trackerId, current);
-    return;
-  }
-
-  const previous = ignitionStateCache.get(trackerId);
-
-  if (current !== previous) {
-    ignitionStateCache.set(trackerId, current);
-
-    const eventType = current ? "ignition_on" : "ignition_off";
-    const payload = JSON.stringify({
-      statusFlags: parsed.statusFlags,
-      voltageMv: parsed.voltageMv,
-      externalPowerMv: parsed.externalPowerMv,
     });
 
     await pool.execute(

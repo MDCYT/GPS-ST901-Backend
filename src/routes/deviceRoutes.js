@@ -18,6 +18,12 @@ const routes = [
   },
   {
     method: "PUT",
+    pattern: /^\/me\/devices\/(?<id>[^/]+)$/,
+    handler: controller.updateMyDevice,
+    authRequired: true,
+  },
+  {
+    method: "PUT",
     pattern: /^\/me\/devices\/(?<id>[^/]+)\/password$/,
     handler: controller.setMyDevicePassword,
     authRequired: true,

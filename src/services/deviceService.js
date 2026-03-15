@@ -299,6 +299,44 @@ async function setDevicePassword(userId, deviceId, password) {
   return getDeviceById(deviceId);
 }
 
+async function updateDeviceProfile(userId, deviceId, payload) {
+  const owner = await isUserOwner(userId, deviceId);
+  if (!owner) {
+    throw new Error("solo el propietario puede editar el dispositivo");
+  }
+
+  const hasName = Object.prototype.hasOwnProperty.call(payload, "name");
+  const hasVehicleName = Object.prototype.hasOwnProperty.call(payload, "vehicleName");
+
+  if (!hasName && !hasVehicleName) {
+    throw new Error("debes enviar name o vehicleName");
+  }
+
+  const updates = [];
+  const params = [];
+
+  if (hasName) {
+    if (typeof payload.name !== "string") {
+      throw new Error("name debe ser string");
+    }
+    updates.push("name = ?");
+    params.push(payload.name.trim() || null);
+  }
+
+  if (hasVehicleName) {
+    if (typeof payload.vehicleName !== "string") {
+      throw new Error("vehicleName debe ser string");
+    }
+    updates.push("vehicle_name = ?");
+    params.push(payload.vehicleName.trim() || null);
+  }
+
+  params.push(deviceId);
+
+  await pool.execute(`UPDATE devices SET ${updates.join(", ")} WHERE id = ?`, params);
+  return getDeviceById(deviceId);
+}
+
 async function shareDeviceWithUser(ownerUserId, deviceId, targetUserId) {
   const owner = await isUserOwner(ownerUserId, deviceId);
   if (!owner) {
@@ -440,6 +478,7 @@ module.exports = {
   getDeviceById,
   canUserAccessDevice,
   registerDeviceForUser,
+  updateDeviceProfile,
   setDevicePassword,
   shareDeviceWithUser,
   revokeSharedAccess,
