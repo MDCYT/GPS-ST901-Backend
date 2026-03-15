@@ -45,6 +45,11 @@ function parsePacket(packet) {
   const externalPowerMv = parts[15] ? Number(parts[15]) : undefined;
   const voltageMv = parts[16] ? Number(parts[16].replace("#", "")) : undefined;
 
+  // Bit 19 del statusFlags indica si la batería interna está conectada al vehículo
+  const batteryConnected = statusFlags
+    ? Boolean(parseInt(statusFlags, 16) & 0x80000)
+    : null;
+
   return {
     trackerId,
     packetTime: parseDateTime(hhmmss, ddmmyy),
@@ -54,6 +59,7 @@ function parsePacket(packet) {
     speedKmh: Number(speed),
     course: Number(course),
     statusFlags,
+    batteryConnected,
     gsmSignal,
     batteryLevel,
     externalPowerMv,
